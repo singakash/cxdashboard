@@ -159,7 +159,9 @@ function apexOptions(spec, width = 0) {
       itemMargin: { horizontal: 10, vertical: 2 },
       offsetY: 0,
     },
-    tooltip: { theme: P.mode, shared: type !== 'bar' || stacked, intersect: false, y: { formatter: f }, x: { show: true, ...(xFmt ? { formatter: (v) => v } : {}) } },
+    // ApexCharts writes the tooltip header (category) and series names into the tooltip with innerHTML,
+    // so these dataset-derived strings are HTML-escaped here (axis/legend text is rendered as SVG text).
+    tooltip: { theme: P.mode, shared: type !== 'bar' || stacked, intersect: false, y: { formatter: f, title: { formatter: (name) => esc(name) } }, x: { show: true, formatter: (v) => esc(v) } },
     states: { hover: { filter: { type: 'darken', value: 0.92 } }, active: { filter: { type: 'none' } } },
     noData: { text: t('No data for this period'), style: { color: P.muted } },
   };
