@@ -87,6 +87,21 @@ const REGIONS = {
   UAE: { ast: 'https://mea.ast.checkmarx.net', iam: 'https://mea.iam.checkmarx.net' },
 };
 
+// Origins an operator explicitly configured on the command line / environment (trusted, not request input).
+const TRUSTED_ORIGINS = new Set(
+  [...Object.values(REGIONS).flatMap((r) => [r.ast, r.iam]), CONFIG.iamUrl, CONFIG.baseUrl]
+    .map((x) => String(x || '').trim())
+    .filter(Boolean)
+    .map((x) => {
+      try {
+        return new URL(x).origin;
+      } catch {
+        return '';
+      }
+    })
+    .filter(Boolean),
+);
+
 // UI libraries (loaded lazily by the browser through this server, cached on disk).
 const VENDOR = {
   'tabler.min.css': 'npm/@tabler/core@1.0.0/dist/css/tabler.min.css',
@@ -952,12 +967,30 @@ async function connect(body) {
     throw new HttpError(400, 'This does not look like a Checkmarx One API key. Copy the complete key from Identity and Access Management → API Keys, or use an OAuth client under Advanced.');
   if (!tenant) throw new HttpError(400, 'Tenant name could not be detected — please enter it under Advanced.');
   if (!iamUrl || !astUrl) throw new HttpError(400, 'Region could not be detected — please choose it under Advanced.');
-  for (const u of [iamUrl, astUrl]) if (!/^https:\/\//i.test(u) && !/^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/i.test(u)) throw new HttpError(400, `Only https URLs are allowed (${u}).`);
+  // SSRF guard: the IAM/AST endpoints may come from the request body or from the (attacker-controllable)
+  // `iss` claim of the pasted API key, and the server later sends credentials to them. Parse each URL with
+  // the WHATWG parser and only accept: https on a Checkmarx host, an operator-configured origin, or plain
+  // http on loopback (local mock). The validated origin is what gets stored and fetched.
+  const [safeIamUrl, safeAstUrl] = [iamUrl, astUrl].map((raw) => {
+    let u;
+    try {
+      u = new URL(raw);
+    } catch {
+      throw new HttpError(400, 'Invalid IAM/API URL.');
+    }
+    const loopback = u.protocol === 'http:' && (u.hostname === '127.0.0.1' || u.hostname === 'localhost');
+    const httpsOk = u.protocol === 'https:';
+    const checkmarxHost = u.hostname === 'checkmarx.net' || u.hostname.endsWith('.checkmarx.net');
+    if (u.username || u.password || !(loopback || httpsOk)) throw new HttpError(400, 'Only https URLs are allowed.');
+    if (!(loopback || checkmarxHost || TRUSTED_ORIGINS.has(u.origin)))
+      throw new HttpError(400, `The host "${u.hostname}" is not an allowed Checkmarx One endpoint. Choose a region, or configure the URL with --base-url / --iam-url.`);
+    return u.origin;
+  });
   Object.assign(S, {
     auth: apiKey ? { type: 'apikey', apiKey } : { type: 'client', clientId, clientSecret },
     tenant,
-    iamUrl,
-    astUrl,
+    iamUrl: safeIamUrl,
+    astUrl: safeAstUrl,
     astUrlPinned: Boolean(trimUrl(body.baseUrl) || region || CONFIG.baseUrl),
     token: null,
     tokenExp: 0,
