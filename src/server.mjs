@@ -952,7 +952,21 @@ async function readJson(req, limit = 64 * 1024) {
 let ACTUAL_PORT = CONFIG.port;
 function hostAllowed(req) {
   const h = String(req.headers.host || '').toLowerCase();
-  return [`127.0.0.1:${ACTUAL_PORT}`, `localhost:${ACTUAL_PORT}`, `[::1]:${ACTUAL_PORT}`].includes(h) || (CONFIG.host !== '127.0.0.1' && CONFIG.host !== 'localhost');
+  // Always allow the loopback names. Never accept an arbitrary Host header: that would enable DNS rebinding
+  // even when the server is deliberately bound to a non-loopback address.
+  const allowed = new Set(['127.0.0.1', 'localhost', '[::1]']);
+  const bound = String(CONFIG.host || '').toLowerCase();
+  if (bound === '0.0.0.0' || bound === '::' || bound === '[::]') {
+    // Wildcard bind: accept only this machine's own interface addresses and hostname.
+    for (const addrs of Object.values(os.networkInterfaces()))
+      for (const a of addrs || []) allowed.add(a.family === 'IPv6' || a.family === 6 ? `[${a.address.toLowerCase()}]` : a.address);
+    allowed.add(os.hostname().toLowerCase());
+  } else if (bound.includes(':')) {
+    allowed.add(`[${bound.replace(/^\[|\]$/g, '')}]`);
+  } else if (bound) {
+    allowed.add(bound);
+  }
+  return [...allowed].some((name) => h === `${name}:${ACTUAL_PORT}`);
 }
 
 async function connect(body) {
