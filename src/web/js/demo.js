@@ -30,6 +30,9 @@ function makeDemoDataset(months = 12) {
     return k;
   };
   const uuid = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => ((c === 'x' ? rnd() * 16 : (rnd() * 4) | 8) | 0).toString(16));
+  // `months` can come from the URL (?demo&months=N) or a form field; bound it so the generation loops
+  // (which scale with the period length) cannot be driven to unbounded CPU/memory use.
+  months = Math.min(Math.max(Math.trunc(Number(months)) || 12, 1), 60);
   const to = new Date();
   const from = new Date(to);
   from.setMonth(from.getMonth() - months);
