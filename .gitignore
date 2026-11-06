@@ -1,0 +1,19 @@
+# Local IDE / scanner state
+.checkmarx/
+.vscode/
+.idea/
+
+# Runtime cache (normally in ~/.cxone-dashboard) and exported reports
+.cxone-dashboard/
+*.pptx
+*.pdf
+checkmarx-one-snapshot-*.json
+checkmarx-one-findings-*.csv
+
+# OS / tooling
+node_modules/
+.DS_Store
+Thumbs.db
+*.log
+.env
+.env.*

@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en" data-bs-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Checkmarx One Value Dashboard</title>
+    <link rel="icon" type="image/svg+xml" href="{{FAVICON}}" />
+    <style id="cx-fonts">
+      {{FONTS}}
+    </style>
+    <style id="cx-style">
+      {{STYLE}}
+    </style>
+  </head>
+  <body>
+    <div id="splash" class="splash" role="status" aria-label="Loading"><div class="splash-ring"></div></div>
+    <div id="app"></div>
+    <div id="toasts" aria-live="polite"></div>
+    <script>
+      window.__CXD__ = __CXD_BOOT__;
+    </script>
+    <script>
+      {{ASSETS}}
+    </script>
+    <script>
+      {{SCRIPTS}}
+    </script>
+  </body>
+</html>
