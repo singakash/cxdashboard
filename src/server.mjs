@@ -952,12 +952,30 @@ async function connect(body) {
     throw new HttpError(400, 'This does not look like a Checkmarx One API key. Copy the complete key from Identity and Access Management → API Keys, or use an OAuth client under Advanced.');
   if (!tenant) throw new HttpError(400, 'Tenant name could not be detected — please enter it under Advanced.');
   if (!iamUrl || !astUrl) throw new HttpError(400, 'Region could not be detected — please choose it under Advanced.');
-  for (const u of [iamUrl, astUrl]) if (!/^https:\/\//i.test(u) && !/^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/i.test(u)) throw new HttpError(400, `Only https URLs are allowed (${u}).`);
+  // SSRF guard: the IAM / API base URLs may come from the request body or from the (unverified) API key
+  // payload, and this server sends credentials and tokens to them. Only accept URLs that exactly match a
+  // known Checkmarx One region, a URL the operator configured via CLI/env, or a loopback http endpoint
+  // (local mock). The value that is stored is the allowlist entry, not the request-supplied string.
+  const allowedBases = [...Object.values(REGIONS).flatMap((r) => [r.ast, r.iam]), CONFIG.baseUrl, CONFIG.iamUrl].map(trimUrl).filter(Boolean);
+  const [safeIamUrl, safeAstUrl] = [iamUrl, astUrl].map((u) => {
+    let parsed;
+    try {
+      parsed = new URL(u);
+    } catch {
+      throw new HttpError(400, 'Invalid Checkmarx One URL.');
+    }
+    const plain = !parsed.username && !parsed.password && !parsed.search && !parsed.hash;
+    const normalized = trimUrl(parsed.href);
+    const known = plain && parsed.protocol === 'https:' ? allowedBases.find((a) => a === normalized) : undefined;
+    if (known) return known;
+    if (plain && parsed.protocol === 'http:' && (parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost') && parsed.pathname === '/') return parsed.origin;
+    throw new HttpError(400, 'The URL is not an allowed Checkmarx One endpoint. Use a Checkmarx One region, or --base-url / --iam-url when starting the dashboard.');
+  });
   Object.assign(S, {
     auth: apiKey ? { type: 'apikey', apiKey } : { type: 'client', clientId, clientSecret },
     tenant,
-    iamUrl,
-    astUrl,
+    iamUrl: safeIamUrl,
+    astUrl: safeAstUrl,
     astUrlPinned: Boolean(trimUrl(body.baseUrl) || region || CONFIG.baseUrl),
     token: null,
     tokenExp: 0,
