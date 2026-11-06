@@ -16,7 +16,7 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
-import { randomBytes, createHash } from 'node:crypto';
+import { randomBytes, createHash, timingSafeEqual } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -103,6 +103,8 @@ const VENDOR_MIRRORS = ['https://cdn.jsdelivr.net/', 'https://unpkg.com/'];
 // State (in memory only — credentials and tokens are never written to disk)
 // ----------------------------------------------------------------------------------------------
 const SESSION_TOKEN = randomBytes(24).toString('hex');
+// Digest of the token, compared in constant time (equal-length buffers) against the digest of the presented header.
+const SESSION_TOKEN_DIGEST = createHash('sha256').update(SESSION_TOKEN).digest();
 const S = {
   auth: null, // { type:'apikey', apiKey } | { type:'client', clientId, clientSecret }
   tenant: '',
@@ -1026,7 +1028,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && p === '/favicon.ico') return send(res, 204, '');
 
     if (p.startsWith('/local/')) {
-      if (req.headers['x-cxd-token'] !== SESSION_TOKEN) return send(res, 403, { error: 'Invalid session token' });
+      if (!timingSafeEqual(createHash('sha256').update(String(req.headers['x-cxd-token'] || '')).digest(), SESSION_TOKEN_DIGEST)) return send(res, 403, { error: 'Invalid session token' });
       if (req.method === 'GET' && p === '/local/env')
         return send(res, 200, {
           version: VERSION,
