@@ -82,3 +82,32 @@ test('accepts a local interface address on a wildcard bind', async () => {
   if (!v4) return;
   assert.equal(await status(`${v4.address}:${port}`), 204);
 });
+
+// Fetch the bootstrap page by connecting to `connectHost` (the peer address the server sees is the
+// connection's source address, which is not loopback when we connect to a non-loopback interface).
+const page = (connectHost, hostHeader) =>
+  new Promise((resolve, reject) => {
+    http
+      .get({ host: connectHost, port, path: '/', headers: { Host: hostHeader, 'Accept-Encoding': 'identity' } }, (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => resolve({ status: res.statusCode, body: Buffer.concat(chunks).toString('utf8') }));
+      })
+      .on('error', reject);
+  });
+
+test('serves the session token to a loopback client', async () => {
+  const r = await page('127.0.0.1', `127.0.0.1:${port}`);
+  assert.equal(r.status, 200);
+  assert.match(r.body, /"token":"[0-9a-f]+"/);
+});
+
+test('does not hand the session token to a non-loopback client on a wildcard bind', async () => {
+  const v4 = Object.values(os.networkInterfaces())
+    .flat()
+    .find((a) => a && a.family !== 'IPv6' && a.family !== 6 && !a.internal);
+  if (!v4) return;
+  const r = await page(v4.address, `${v4.address}:${port}`);
+  assert.equal(r.status, 403);
+  assert.ok(!/"token":"[0-9a-f]+"/.test(r.body));
+});
