@@ -950,6 +950,8 @@ async function readJson(req, limit = 64 * 1024) {
 }
 
 let ACTUAL_PORT = CONFIG.port;
+// Peer addresses (socket-level, not the spoofable Host header) that identify a client on this machine.
+const LOOPBACK_PEERS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 function hostAllowed(req) {
   const h = String(req.headers.host || '').toLowerCase();
   // Always allow the loopback names. Never accept an arbitrary Host header: that would enable DNS rebinding
@@ -1063,6 +1065,10 @@ const server = http.createServer(async (req, res) => {
     const p = url.pathname;
 
     if (req.method === 'GET' && (p === '/' || p === '/index.html')) {
+      // The bootstrap page carries the session token that unlocks /local/*. Only hand it to a client on this
+      // machine (loopback peer), so binding to a non-loopback address does not expose the token — and with it
+      // the stored Checkmarx credentials and dataset — to unauthenticated remote hosts.
+      if (!LOOPBACK_PEERS.has(req.socket.remoteAddress)) return send(res, 403, { error: 'The dashboard can only be opened from the machine it runs on' });
       const html = (await appHtml()).replace('__CXD_BOOT__', JSON.stringify({ token: SESSION_TOKEN, version: VERSION }));
       return sendCompressed(req, res, 200, Buffer.from(html), { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Content-Security-Policy': CSP, 'Referrer-Policy': 'no-referrer' });
     }
