@@ -984,6 +984,12 @@ function hostAllowed(req) {
   return [...allowed].some((name) => h === `${name}:${ACTUAL_PORT}`);
 }
 
+// True when the TCP peer (not any client-supplied header) is a loopback address.
+function isLoopbackPeer(req) {
+  const addr = String(req.socket?.remoteAddress || '').toLowerCase();
+  return addr === '::1' || addr === '127.0.0.1' || addr.startsWith('127.') || addr.startsWith('::ffff:127.');
+}
+
 async function connect(body) {
   const apiKey = String(body.apiKey || '').trim();
   const clientId = String(body.clientId || '').trim();
@@ -1078,6 +1084,10 @@ const server = http.createServer(async (req, res) => {
     const p = url.pathname;
 
     if (req.method === 'GET' && (p === '/' || p === '/index.html')) {
+      // The bootstrap page carries the session token that authorizes every /local/* call, so it must only be
+      // handed to a client on this machine. With a wildcard/non-loopback --host, peers on the network are
+      // refused here instead of receiving the token.
+      if (!isLoopbackPeer(req)) return send(res, 403, { error: 'The dashboard can only be opened from the machine it runs on.' });
       const html = (await appHtml()).replace('__CXD_BOOT__', JSON.stringify({ token: SESSION_TOKEN, version: VERSION }));
       return sendCompressed(req, res, 200, Buffer.from(html), { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Content-Security-Policy': CSP, 'Referrer-Policy': 'no-referrer' });
     }
