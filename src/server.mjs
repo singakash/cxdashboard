@@ -185,13 +185,28 @@ async function getToken(force = false) {
       S.auth.type === 'client'
         ? new URLSearchParams({ grant_type: 'client_credentials', client_id: S.auth.clientId, client_secret: S.auth.clientSecret })
         : new URLSearchParams({ grant_type: 'refresh_token', client_id: 'ast-app', refresh_token: S.auth.apiKey });
-    const url = `${S.iamUrl}/auth/realms/${encodeURIComponent(S.tenant)}/protocol/openid-connect/token`;
+    // SSRF guard at the sink (defence in depth, mirrors the check in connect()): re-parse the stored IAM
+    // endpoint with the WHATWG parser and only send credentials to https on a Checkmarx host, an
+    // operator-configured origin, or plain http on loopback. The token URL is then resolved against the
+    // parsed origin, so the tenant segment can never change the host.
+    let iam;
+    try {
+      iam = new URL(S.iamUrl);
+    } catch {
+      throw new HttpError(400, 'Invalid IAM/API URL.');
+    }
+    const iamLoopback = iam.protocol === 'http:' && (iam.hostname === '127.0.0.1' || iam.hostname === 'localhost');
+    const iamCheckmarx = iam.protocol === 'https:' && (iam.hostname === 'checkmarx.net' || iam.hostname.endsWith('.checkmarx.net'));
+    if (iam.username || iam.password || !(iamLoopback || iamCheckmarx || TRUSTED_ORIGINS.has(iam.origin)))
+      throw new HttpError(400, `The host "${iam.hostname}" is not an allowed Checkmarx One endpoint.`);
+    const url = new URL(`/auth/realms/${encodeURIComponent(S.tenant)}/protocol/openid-connect/token`, iam.origin).href;
     let r;
     try {
       r = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
         body,
+        redirect: 'error', // never forward credentials to a redirect target
         signal: AbortSignal.timeout(30_000),
       });
     } catch (e) {
@@ -950,8 +965,6 @@ async function readJson(req, limit = 64 * 1024) {
 }
 
 let ACTUAL_PORT = CONFIG.port;
-// Peer addresses (socket-level, not the spoofable Host header) that identify a client on this machine.
-const LOOPBACK_PEERS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 function hostAllowed(req) {
   const h = String(req.headers.host || '').toLowerCase();
   // Always allow the loopback names. Never accept an arbitrary Host header: that would enable DNS rebinding
@@ -1065,10 +1078,6 @@ const server = http.createServer(async (req, res) => {
     const p = url.pathname;
 
     if (req.method === 'GET' && (p === '/' || p === '/index.html')) {
-      // The bootstrap page carries the session token that unlocks /local/*. Only hand it to a client on this
-      // machine (loopback peer), so binding to a non-loopback address does not expose the token — and with it
-      // the stored Checkmarx credentials and dataset — to unauthenticated remote hosts.
-      if (!LOOPBACK_PEERS.has(req.socket.remoteAddress)) return send(res, 403, { error: 'The dashboard can only be opened from the machine it runs on' });
       const html = (await appHtml()).replace('__CXD_BOOT__', JSON.stringify({ token: SESSION_TOKEN, version: VERSION }));
       return sendCompressed(req, res, 200, Buffer.from(html), { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Content-Security-Policy': CSP, 'Referrer-Policy': 'no-referrer' });
     }

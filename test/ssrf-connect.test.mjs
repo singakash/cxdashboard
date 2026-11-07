@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import http from 'node:http';
 import os from 'node:os';
 import fs from 'node:fs';
 
@@ -89,6 +90,31 @@ test('rejects an API key whose iss claim points at a non-Checkmarx host', async 
     body: JSON.stringify({ apiKey: key }),
   });
   assert.equal(r.status, 400);
+});
+
+test('token request does not follow redirects to another host', async () => {
+  // A loopback "IAM" answers the token request with a redirect to a second loopback listener.
+  // Credentials must never reach the redirect target.
+  let leaked = false;
+  const target = http.createServer((req, res) => {
+    leaked = true;
+    res.end('{}');
+  });
+  await new Promise((r) => target.listen(0, '127.0.0.1', r));
+  const iam = http.createServer((req, res) => {
+    res.writeHead(307, { Location: `http://127.0.0.1:${target.address().port}/steal` });
+    res.end();
+  });
+  await new Promise((r) => iam.listen(0, '127.0.0.1', r));
+  try {
+    const iamPort = iam.address().port;
+    const r = await connect({ iamUrl: `http://127.0.0.1:${iamPort}`, baseUrl: `http://127.0.0.1:${iamPort}` });
+    assert.ok(r.status >= 400);
+    assert.equal(leaked, false);
+  } finally {
+    iam.close();
+    target.close();
+  }
 });
 
 test('does not reject a Checkmarx regional host at the URL validation step', async () => {
